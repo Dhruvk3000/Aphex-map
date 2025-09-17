@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Circle, CircleMarker, Popup, useMapEvents, Pane, Polyline } from 'react-leaflet';
 import type { LeafletMouseEvent, LatLng } from 'leaflet';
 import L from 'leaflet';
@@ -203,54 +203,69 @@ const haversine = (a: [number, number], b: [number, number]) => {
   return 2 * R * Math.asin(Math.sqrt(h));
 };
 
-const buildHighlightedSegments = (waterways: Waterway[], clusters: Cluster[]) => {
-  const segments: { id: string; path: [number, number][] }[] = [];
-  for (const w of waterways) {
-    if (w.path.length < 2) continue;
-    const cum: number[] = [0];
-    for (let i = 1; i < w.path.length; i++) cum[i] = cum[i - 1] + haversine(w.path[i - 1], w.path[i]);
-
-    const windows: [number, number][] = [];
-    for (const c of clusters) {
-      for (let i = 1; i < w.path.length; i++) {
-        const a = w.path[i - 1];
-        const b = w.path[i];
-        const { dist, t, segLen } = distPointToSegmentMeters(c.center, a, b);
-        const threshold = c.radius + 150; // allow slight slack
-        if (dist <= threshold) {
-          const s0 = cum[i - 1];
-          const sClosest = s0 + t * segLen;
-          const ext = Math.max(600, c.radius);
-          windows.push([sClosest - ext, sClosest + ext]);
-        }
-      }
-    }
-
-    if (!windows.length) continue;
-    windows.sort((a, b) => a[0] - b[0]);
-    const merged: [number, number][] = [];
-    for (const win of windows) {
-      if (!merged.length || win[0] > merged[merged.length - 1][1]) merged.push([...win]);
-      else merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], win[1]);
-    }
-
-    // Include segments whose span overlaps any merged window
-    let current: [number, number][] | null = null;
-    const overlaps = (s0: number, s1: number) => merged.some(([a, b]) => s0 <= b && s1 >= a);
-    for (let i = 1; i < w.path.length; i++) {
-      const s0 = cum[i - 1];
-      const s1 = cum[i];
-      if (overlaps(s0, s1)) {
-        if (!current) current = [w.path[i - 1]] as [number, number][];
-        current.push(w.path[i]);
-      } else if (current) {
-        segments.push({ id: `${w.id}-${segments.length}`, path: current as [number, number][] });
-        current = null;
-      }
-    }
-    if (current) segments.push({ id: `${w.id}-${segments.length}`, path: current as [number, number][] });
+const bboxFromCircles = (centers: [number, number][], radii: number[]) => {
+  if (!centers.length) return [18.45, 73.75, 18.60, 73.95] as [number, number, number, number];
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+  for (let i = 0; i < centers.length; i++) {
+    const [lat, lng] = centers[i];
+    const r = radii[i];
+    const dLat = r / metersPerDegLat;
+    const dLng = r / metersPerDegLng(lat);
+    minLat = Math.min(minLat, lat - dLat);
+    maxLat = Math.max(maxLat, lat + dLat);
+    minLng = Math.min(minLng, lng - dLng);
+    maxLng = Math.max(maxLng, lng + dLng);
   }
-  return segments;
+  const pad = 0.02;
+  return [minLat - pad, minLng - pad, maxLat + pad, maxLng + pad] as [number, number, number, number];
+};
+
+type WaterGeom = { id: string; path: [number, number][]; isPolygon: boolean };
+
+const insideAnyCircle = (p: [number, number], circles: { center: [number, number]; radius: number }[]) =>
+  circles.some(c => haversine(p, c.center) <= c.radius);
+
+const makeSegmentsForLine = (
+  path: [number, number][],
+  circles: { center: [number, number]; radius: number }[],
+  extraMeters: number
+) => {
+  if (path.length < 2) return [] as { id: string; path: [number, number][] }[];
+  const cum: number[] = [0];
+  for (let i = 1; i < path.length; i++) cum[i] = cum[i - 1] + haversine(path[i - 1], path[i]);
+  const windows: [number, number][] = [];
+  for (let i = 0; i < path.length; i++) {
+    if (insideAnyCircle(path[i], circles)) {
+      const s = cum[i] ?? 0;
+      windows.push([s, s]);
+    }
+  }
+  if (!windows.length) return [];
+  // Merge and expand
+  windows.sort((a, b) => a[0] - b[0]);
+  const merged: [number, number][] = [];
+  for (const [a, b] of windows) {
+    const A = a - extraMeters, B = b + extraMeters;
+    if (!merged.length || A > merged[merged.length - 1][1]) merged.push([A, B]);
+    else merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], B);
+  }
+  // Build segments
+  const segs: { id: string; path: [number, number][] }[] = [];
+  let cur: [number, number][] | null = null;
+  const overlaps = (s0: number, s1: number) => merged.some(([A, B]) => s0 <= B && s1 >= A);
+  for (let i = 1; i < path.length; i++) {
+    const s0 = cum[i - 1];
+    const s1 = cum[i];
+    if (overlaps(s0, s1)) {
+      if (!cur) cur = [path[i - 1]] as [number, number][];
+      cur.push(path[i]);
+    } else if (cur) {
+      segs.push({ id: `${i}-${segs.length}` , path: cur as [number, number][] });
+      cur = null;
+    }
+  }
+  if (cur) segs.push({ id: `${path.length}-${segs.length}`, path: cur as [number, number][] });
+  return segs;
 };
 
 const MapWrapper: React.FC<MapWrapperProps> = ({
@@ -270,7 +285,82 @@ const MapWrapper: React.FC<MapWrapperProps> = ({
   const [zoom, setZoom] = useState(13);
 
   const groupedCases = useMemo(() => clusterCases(cases, zoom), [cases, zoom]);
-  const highlighted = useMemo(() => buildHighlightedSegments(waterways, clusters), [waterways, clusters]);
+
+  const [waterGeoms, setWaterGeoms] = useState<WaterGeom[]>([]);
+  const [waterLoaded, setWaterLoaded] = useState(false);
+
+  useEffect(() => {
+    const centers = [...clusters.map(c => c.center), ...riskZones.map(r => r.center)];
+    const radii = [...clusters.map(c => c.radius), ...riskZones.map(r => r.radius)];
+    const [s, w, n, e] = bboxFromCircles(centers, radii);
+    const query = `
+      [out:json][timeout:25];
+      (
+        way["waterway"~"river|stream|canal"](${s},${w},${n},${e});
+        way["natural"="water"](${s},${w},${n},${e});
+        relation["natural"="water"](${s},${w},${n},${e});
+      );
+      out geom;
+    `;
+    const url = 'https://overpass-api.de/api/interpreter';
+    setWaterLoaded(false);
+    fetch(url, { method: 'POST', body: query, headers: { 'Content-Type': 'text/plain' } })
+      .then(r => r.json())
+      .then(data => {
+        const geoms: WaterGeom[] = [];
+        if (data && data.elements) {
+          for (const el of data.elements) {
+            const geom = el.geometry as { lat: number; lon: number }[] | undefined;
+            if (geom && geom.length >= 2) {
+              const isPolygon = !!(el.tags && (el.tags.natural === 'water' || el.tags.water === 'lake'));
+              geoms.push({ id: `${el.type}/${el.id}` , path: geom.map(g => [g.lat, g.lon] as [number, number]), isPolygon });
+            }
+          }
+        }
+        setWaterGeoms(geoms);
+      })
+      .catch(() => setWaterGeoms([]))
+      .finally(() => setWaterLoaded(true));
+  }, [clusters, riskZones]);
+
+  const contaminatedSegments = useMemo(() => {
+    if (!waterLoaded || !waterGeoms.length) return [] as { id: string; path: [number, number][] }[];
+    const circles = [
+      ...clusters.map(c => ({ center: c.center, radius: c.radius })),
+      ...riskZones.map(r => ({ center: r.center, radius: r.radius })),
+    ];
+    const segs: { id: string; path: [number, number][] }[] = [];
+    let idx = 0;
+    for (const g of waterGeoms) {
+      if (g.isPolygon) {
+        if (g.path.some(p => insideAnyCircle(p, circles))) segs.push({ id: `${g.id}-${idx++}`, path: g.path });
+      } else {
+        const partial = makeSegmentsForLine(g.path, circles, 200);
+        for (const p of partial) segs.push({ id: `${g.id}-${idx++}`, path: p.path });
+      }
+    }
+    return segs;
+  }, [waterLoaded, waterGeoms, clusters, riskZones]);
+
+  const waterAdjacentRiskSegments = useMemo(() => {
+    if (!waterLoaded || !waterGeoms.length) return [] as { id: string; path: [number, number][] }[];
+    const circles = [
+      ...clusters.map(c => ({ center: c.center, radius: c.radius })),
+      ...riskZones.map(r => ({ center: r.center, radius: r.radius })),
+    ];
+    const buffer = 1400; // increased adjacent radius along water
+    const segs: { id: string; path: [number, number][] }[] = [];
+    let idx = 0;
+    for (const g of waterGeoms) {
+      if (g.isPolygon) {
+        if (g.path.some(p => insideAnyCircle(p, circles))) segs.push({ id: `${g.id}-${idx++}`, path: g.path });
+      } else {
+        const partial = makeSegmentsForLine(g.path, circles, buffer);
+        for (const p of partial) segs.push({ id: `${g.id}-${idx++}`, path: p.path });
+      }
+    }
+    return segs;
+  }, [waterLoaded, waterGeoms, clusters, riskZones]);
 
   return (
     <MapContainer center={mapCenter} zoom={13} scrollWheelZoom={true} className="h-full w-full">
@@ -312,17 +402,17 @@ const MapWrapper: React.FC<MapWrapperProps> = ({
       ))}
 
       {/* Water-Adjacent Risk (surrounding areas of highlighted water) */}
-      {layerVisibility.waterAdjacentRisk && highlighted.map(seg => (
+      {layerVisibility.waterAdjacentRisk && waterAdjacentRiskSegments.map(seg => (
         <Polyline
           key={`${seg.id}-risk`}
           positions={seg.path}
           pane="waterRiskPane"
-          pathOptions={{ color: '#8b5cf6', weight: 10, opacity: 0.35 }}
+          pathOptions={{ color: '#8b5cf6', weight: 14, opacity: 0.35 }}
         />
       ))}
 
       {/* Contaminated Water Layer (highlight river segments) */}
-      {layerVisibility.contaminatedWater && highlighted.map(seg => (
+      {layerVisibility.contaminatedWater && contaminatedSegments.map(seg => (
         <Polyline
           key={seg.id}
           positions={seg.path}
