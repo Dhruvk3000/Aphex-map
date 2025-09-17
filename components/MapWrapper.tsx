@@ -1,29 +1,28 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Circle, CircleMarker, Popup, useMapEvents, Pane } from 'react-leaflet';
 import type { LeafletMouseEvent, LatLng } from 'leaflet';
 import L from 'leaflet';
 import { Sensor, CaseReport, Cluster, RiskZone, LayerVisibility, SensorStatus, CaseType, AddMode } from '../types';
-import type { Map } from 'leaflet';
 
 const createSensorIcon = (status: SensorStatus): L.DivIcon => {
-    const color = {
-        [SensorStatus.Active]: '#2563eb', // blue-600
-        [SensorStatus.Inactive]: '#6b7280', // gray-500
-        [SensorStatus.Contaminated]: '#dc2626', // red-600
-    }[status];
+  const color = {
+    [SensorStatus.Active]: '#2563eb',
+    [SensorStatus.Inactive]: '#6b7280',
+    [SensorStatus.Contaminated]: '#dc2626',
+  }[status];
 
-    const html = `
+  const html = `
     <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" viewBox="0 0 20 20" fill="${color}">
       <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" />
     </svg>`;
-  
-    return L.divIcon({
-      html: html,
-      className: 'bg-transparent border-0',
-      iconSize: [32, 32],
-      iconAnchor: [16, 32],
-      popupAnchor: [0, -32]
-    });
+
+  return L.divIcon({
+    html,
+    className: 'bg-transparent border-0',
+    iconSize: [32, 32],
+    iconAnchor: [16, 32],
+    popupAnchor: [0, -32],
+  });
 };
 
 interface MapWrapperProps {
@@ -38,25 +37,127 @@ interface MapWrapperProps {
   onMapMove: (center: LatLng) => void;
 }
 
-const MapEventsHandler: React.FC<{ 
+const MapEventsHandler: React.FC<{
   addMode: AddMode;
   onAddItem: (latlng: LatLng) => void;
   onMapMove: (center: LatLng) => void;
-}> = ({ addMode, onAddItem, onMapMove }) => {
+  onZoomChange: (zoom: number) => void;
+}> = ({ addMode, onAddItem, onMapMove, onZoomChange }) => {
   const map = useMapEvents({
     click(e: LeafletMouseEvent) {
-      if (addMode) {
-        onAddItem(e.latlng);
-      }
+      if (addMode) onAddItem(e.latlng);
     },
     moveend() {
       onMapMove(map.getCenter());
     },
     load() {
       onMapMove(map.getCenter());
+      onZoomChange(map.getZoom());
+    },
+    zoomend() {
+      onZoomChange(map.getZoom());
     },
   });
   return null;
+};
+
+interface AggregatedGroup {
+  id: string;
+  type: CaseType;
+  center: [number, number];
+  items: CaseReport[];
+}
+
+const getPrecisionForZoom = (zoom: number): number => {
+  if (zoom >= 15) return 4; // ~11m
+  if (zoom >= 13) return 3; // ~110m
+  if (zoom >= 11) return 2; // ~1.1km
+  if (zoom >= 9) return 1;  // ~11km
+  return 0;                 // very coarse
+};
+
+const roundCoord = (value: number, precision: number) =>
+  Number(value.toFixed(precision));
+
+const clusterCases = (cases: CaseReport[], zoom: number): AggregatedGroup[] => {
+  const precision = getPrecisionForZoom(zoom);
+  // At high zoom, do not cluster: each case is its own group
+  if (precision >= 4) {
+    return cases.map((c) => ({
+      id: `${c.id}`,
+      type: c.type,
+      center: c.position,
+      items: [c],
+    }));
+  }
+
+  const map = new Map<string, AggregatedGroup>();
+  for (const c of cases) {
+    const [lat, lng] = c.position;
+    const key = `${c.type}:${roundCoord(lat, precision)}:${roundCoord(lng, precision)}`;
+    const existing = map.get(key);
+    if (existing) {
+      existing.items.push(c);
+      // Update center as simple average for stability
+      const n = existing.items.length;
+      const avgLat = (existing.center[0] * (n - 1) + lat) / n;
+      const avgLng = (existing.center[1] * (n - 1) + lng) / n;
+      existing.center = [avgLat, avgLng];
+    } else {
+      map.set(key, {
+        id: key,
+        type: c.type,
+        center: [lat, lng],
+        items: [c],
+      });
+    }
+  }
+  return Array.from(map.values());
+};
+
+const nextIndex = (idx: number, len: number) => (idx + 1) % len;
+const prevIndex = (idx: number, len: number) => (idx - 1 + len) % len;
+
+const AggregatedPopup: React.FC<{ group: AggregatedGroup }> = ({ group }) => {
+  const [index, setIndex] = useState(0);
+  const current = group.items[index];
+  const total = group.items.length;
+
+  return (
+    <div className="w-56 text-gray-800">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="font-bold text-base">{group.type} Cases</h3>
+        {total > 1 && (
+          <span className="text-xs text-gray-500">{index + 1} / {total}</span>
+        )}
+      </div>
+      <div className="space-y-1">
+        <p><strong>ID:</strong> {current.id}</p>
+        <p><strong>Name:</strong> {current.name}</p>
+        <p><strong>Age/Gender:</strong> {current.age}, {current.gender}</p>
+        <p><strong>Diagnosis:</strong> <span className="font-semibold">{current.disease}</span></p>
+        <p><strong>Symptoms:</strong> {current.symptoms.join(', ')}</p>
+      </div>
+      {total > 1 && (
+        <div className="mt-3 flex items-center justify-between">
+          <button
+            onClick={(e) => { e.stopPropagation(); setIndex((i) => prevIndex(i, total)); }}
+            className="px-2 py-1 rounded bg-gray-200 hover:bg-gray-300 text-gray-800"
+            title="Previous"
+          >
+            ◀
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setIndex((i) => nextIndex(i, total)); }}
+            className="px-2 py-1 rounded bg-gray-200 hover:bg-gray-300 text-gray-800"
+            title="Next"
+          >
+            ▶
+          </button>
+        </div>
+      )}
+    </div>
+  );
 };
 
 const MapWrapper: React.FC<MapWrapperProps> = ({
@@ -71,6 +172,9 @@ const MapWrapper: React.FC<MapWrapperProps> = ({
   onMapMove,
 }) => {
   const mapCenter: [number, number] = [18.5204, 73.8567];
+  const [zoom, setZoom] = useState(13);
+
+  const groupedCases = useMemo(() => clusterCases(cases, zoom), [cases, zoom]);
 
   return (
     <MapContainer center={mapCenter} zoom={13} scrollWheelZoom={true} className="h-full w-full">
@@ -83,7 +187,6 @@ const MapWrapper: React.FC<MapWrapperProps> = ({
       <Pane name="riskZonePane" style={{ zIndex: 450 }} />
       <Pane name="contaminatedZonePane" style={{ zIndex: 460 }} />
       <Pane name="casePane" style={{ zIndex: 470 }} />
-      {/* Sensor markers will use the default markerPane (zIndex: 600) */}
 
       {/* Sensor Layer */}
       {layerVisibility.sensors && sensors.map(sensor => (
@@ -97,32 +200,42 @@ const MapWrapper: React.FC<MapWrapperProps> = ({
         />
       ))}
 
-      {/* Case Report Layer */}
-      {layerVisibility.cases && cases.map(report => (
-        <CircleMarker
-          key={report.id}
-          center={report.position}
-          pane="casePane"
-          radius={6}
-          pathOptions={{
-            color: report.type === CaseType.Confirmed ? '#b91c1c' : '#f59e0b', // red-800 or amber-500
-            fillColor: report.type === CaseType.Confirmed ? '#ef4444' : '#facc15', // red-500 or yellow-400
-            fillOpacity: 0.8,
-            weight: 1,
-          }}
-        >
-          <Popup>
-            <div className="w-48 text-gray-800">
-                <h3 className="font-bold text-base mb-1">Case: {report.id}</h3>
-                <p><strong>Name:</strong> {report.name}</p>
-                <p><strong>Age:</strong> {report.age}, <strong>Gender:</strong> {report.gender}</p>
-                <p><strong>Status:</strong> {report.type}</p>
-                <p><strong>Diagnosis:</strong> <span className="font-semibold">{report.disease}</span></p>
-                <p className="mt-1"><strong>Symptoms:</strong> {report.symptoms.join(', ')}</p>
-            </div>
-          </Popup>
-        </CircleMarker>
-      ))}
+      {/* Case Report Layer with aggregation */}
+      {layerVisibility.cases && groupedCases.map(group => {
+        const isSingle = group.items.length === 1;
+        const colorStroke = group.type === CaseType.Confirmed ? '#b91c1c' : '#f59e0b';
+        const colorFill = group.type === CaseType.Confirmed ? '#ef4444' : '#facc15';
+        const radius = isSingle ? 6 : Math.min(20, 6 + Math.sqrt(group.items.length) * 2);
+        return (
+          <CircleMarker
+            key={group.id}
+            center={group.center}
+            pane="casePane"
+            radius={radius}
+            pathOptions={{
+              color: colorStroke,
+              fillColor: colorFill,
+              fillOpacity: 0.85,
+              weight: 1,
+            }}
+          >
+            <Popup>
+              {isSingle ? (
+                <div className="w-48 text-gray-800">
+                  <h3 className="font-bold text-base mb-1">Case: {group.items[0].id}</h3>
+                  <p><strong>Name:</strong> {group.items[0].name}</p>
+                  <p><strong>Age:</strong> {group.items[0].age}, <strong>Gender:</strong> {group.items[0].gender}</p>
+                  <p><strong>Status:</strong> {group.items[0].type}</p>
+                  <p><strong>Diagnosis:</strong> <span className="font-semibold">{group.items[0].disease}</span></p>
+                  <p className="mt-1"><strong>Symptoms:</strong> {group.items[0].symptoms.join(', ')}</p>
+                </div>
+              ) : (
+                <AggregatedPopup group={group} />
+              )}
+            </Popup>
+          </CircleMarker>
+        );
+      })}
 
       {/* Contaminated Zone Layer */}
       {layerVisibility.contaminatedZones && clusters.map(cluster => (
@@ -131,41 +244,39 @@ const MapWrapper: React.FC<MapWrapperProps> = ({
           center={cluster.center}
           radius={cluster.radius}
           pane="contaminatedZonePane"
-          pathOptions={{ 
-            color: '#dc2626', 
-            fillColor: '#ef4444', 
-            fillOpacity: 0.3, 
+          pathOptions={{
+            color: '#dc2626',
+            fillColor: '#ef4444',
+            fillOpacity: 0.3,
             weight: 2,
-            // Disable interaction when in add mode to allow placing items inside the zone
-            interactive: !addMode
+            interactive: !addMode,
           }}
         >
-           <Popup>Contaminated Zone</Popup>
+          <Popup>Contaminated Zone</Popup>
         </Circle>
       ))}
 
-       {/* In-Risk Zone Layer */}
+      {/* In-Risk Zone Layer */}
       {layerVisibility.inRiskZones && riskZones.map(zone => (
         <Circle
           key={`${zone.id}-${addMode}`}
           center={zone.center}
           radius={zone.radius}
           pane="riskZonePane"
-          pathOptions={{ 
-            color: '#f59e0b', 
-            fillColor: '#facc15', 
-            fillOpacity: 0.2, 
-            weight: 2, 
+          pathOptions={{
+            color: '#f59e0b',
+            fillColor: '#facc15',
+            fillOpacity: 0.2,
+            weight: 2,
             dashArray: '10, 5',
-            // Disable interaction when in add mode
-            interactive: !addMode
+            interactive: !addMode,
           }}
         >
-            <Popup>In-Risk Zone</Popup>
+          <Popup>In-Risk Zone</Popup>
         </Circle>
       ))}
-      
-      <MapEventsHandler addMode={addMode} onAddItem={onAddItem} onMapMove={onMapMove} />
+
+      <MapEventsHandler addMode={addMode} onAddItem={onAddItem} onMapMove={onMapMove} onZoomChange={setZoom} />
     </MapContainer>
   );
 };
