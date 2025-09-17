@@ -4,7 +4,7 @@ import MapWrapper from './components/MapWrapper';
 import SensorModal from './components/SensorModal';
 import AddControl from './components/AddControl';
 import { Sensor, CaseReport, LayerVisibility, SensorStatus, MapStats, Cluster, RiskZone, AddMode, Weather, CaseType, SensorReading } from './types';
-import { INITIAL_SENSORS, INITIAL_CASES, CLUSTERS, RISK_ZONES } from './lib/data';
+import { INITIAL_SENSORS, INITIAL_CASES, CLUSTERS, RISK_ZONES, HEALTH_FACILITIES, WATERWAYS } from './lib/data';
 import type { LatLng } from 'leaflet';
 
 // IMPORTANT: Replace with your actual OpenWeatherMap API key
@@ -115,6 +115,8 @@ const App: React.FC = () => {
     cases: true,
     contaminatedZones: true,
     inRiskZones: true,
+    healthFacilities: true,
+    contaminatedWater: true,
   });
 
   const [selectedSensor, setSelectedSensor] = useState<Sensor | null>(null);
@@ -301,6 +303,8 @@ const App: React.FC = () => {
           onAddItem={handleAddItem}
           onSensorClick={handleSensorClick}
           onMapMove={handleMapMove}
+          facilities={HEALTH_FACILITIES}
+          waterways={WATERWAYS}
         />
         <AddControl addMode={addMode} setAddMode={setAddMode} />
       </main>
