@@ -80,6 +80,8 @@ const Sidebar: React.FC<SidebarProps> = ({ stats, layerVisibility, onLayerVisibi
           <LayerToggle label="Reported Cases" checked={layerVisibility.cases} onChange={() => toggleLayer('cases')} />
           <LayerToggle label="Contaminated Zones" checked={layerVisibility.contaminatedZones} onChange={() => toggleLayer('contaminatedZones')} />
           <LayerToggle label="In-Risk Zones" checked={layerVisibility.inRiskZones} onChange={() => toggleLayer('inRiskZones')} />
+          <LayerToggle label="Health Facilities" checked={layerVisibility.healthFacilities} onChange={() => toggleLayer('healthFacilities')} />
+          <LayerToggle label="Contaminated Water" checked={layerVisibility.contaminatedWater} onChange={() => toggleLayer('contaminatedWater')} />
         </div>
       </div>
        <div className="mt-auto text-center text-gray-500 text-xs">
