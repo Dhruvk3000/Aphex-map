@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Circle, CircleMarker, Popup, useMapEvents, Pane } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Circle, CircleMarker, Popup, useMapEvents, Pane, Polyline } from 'react-leaflet';
 import type { LeafletMouseEvent, LatLng } from 'leaflet';
 import L from 'leaflet';
-import { Sensor, CaseReport, Cluster, RiskZone, LayerVisibility, SensorStatus, CaseType, AddMode } from '../types';
+import { Sensor, CaseReport, Cluster, RiskZone, LayerVisibility, SensorStatus, CaseType, AddMode, Facility, FacilityType, Waterway } from '../types';
 
 const createSensorIcon = (status: SensorStatus): L.DivIcon => {
   const color = {
@@ -35,6 +35,8 @@ interface MapWrapperProps {
   onAddItem: (latlng: LatLng) => void;
   onSensorClick: (sensor: Sensor) => void;
   onMapMove: (center: LatLng) => void;
+  facilities: Facility[];
+  waterways: Waterway[];
 }
 
 const MapEventsHandler: React.FC<{
@@ -69,11 +71,11 @@ interface AggregatedGroup {
 }
 
 const getPrecisionForZoom = (zoom: number): number => {
-  if (zoom >= 15) return 4; // ~11m
-  if (zoom >= 13) return 3; // ~110m
-  if (zoom >= 11) return 2; // ~1.1km
-  if (zoom >= 9) return 1;  // ~11km
-  return 0;                 // very coarse
+  if (zoom >= 16) return 4; // no clustering only when very zoomed-in
+  if (zoom >= 14) return 3; // start clustering a bit sooner
+  if (zoom >= 12) return 2;
+  if (zoom >= 10) return 1;
+  return 0;
 };
 
 const roundCoord = (value: number, precision: number) =>
@@ -160,6 +162,76 @@ const AggregatedPopup: React.FC<{ group: AggregatedGroup }> = ({ group }) => {
   );
 };
 
+const createFacilityIcon = (type: FacilityType): L.DivIcon => {
+  const color = type === FacilityType.Hospital ? '#ef4444' : '#3b82f6';
+  const glyph = type === FacilityType.Hospital ? '+' : '✚';
+  const html = `
+    <div style="background:${color};color:#fff;width:24px;height:24px;border-radius:9999px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;box-shadow:0 2px 6px rgba(0,0,0,0.3)">${glyph}</div>
+  `;
+  return L.divIcon({ html, className: 'bg-transparent border-0', iconSize: [24, 24], iconAnchor: [12, 12] });
+};
+
+const toRad = (v: number) => (v * Math.PI) / 180;
+const haversine = (a: [number, number], b: [number, number]) => {
+  const R = 6371000;
+  const dLat = toRad(b[0] - a[0]);
+  const dLng = toRad(b[1] - a[1]);
+  const lat1 = toRad(a[0]);
+  const lat2 = toRad(b[0]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+};
+
+const buildHighlightedSegments = (waterways: Waterway[], clusters: Cluster[]) => {
+  const segments: { id: string; path: [number, number][] }[] = [];
+  for (const w of waterways) {
+    if (w.path.length < 2) continue;
+    const cum: number[] = [0];
+    for (let i = 1; i < w.path.length; i++) cum[i] = cum[i - 1] + haversine(w.path[i - 1], w.path[i]);
+    const windows: [number, number][] = [];
+    for (const c of clusters) {
+      for (let i = 0; i < w.path.length; i++) {
+        const d = haversine(w.path[i], c.center);
+        if (d <= c.radius) {
+          const centerS = cum[i];
+          const ext = Math.max(500, c.radius); // extend upstream/downstream by >=500m or cluster radius
+          windows.push([centerS - ext, centerS + ext]);
+        }
+      }
+    }
+    // Merge windows
+    windows.sort((a, b) => a[0] - b[0]);
+    const merged: [number, number][] = [];
+    for (const win of windows) {
+      if (!merged.length || win[0] > merged[merged.length - 1][1]) merged.push([...win]);
+      else merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], win[1]);
+    }
+    if (!merged.length) continue;
+    // Build mask
+    const mask = new Array(w.path.length).fill(false);
+    for (let i = 0; i < w.path.length; i++) {
+      const s = cum[i];
+      for (const [a, b] of merged) {
+        if (s >= a && s <= b) { mask[i] = true; break; }
+      }
+    }
+    // Extract contiguous segments
+    let start: number | null = null;
+    for (let i = 0; i < w.path.length; i++) {
+      if (mask[i] && start === null) start = i;
+      const endOfMask = i === w.path.length - 1 || !mask[i + 1];
+      if (start !== null && endOfMask) {
+        const end = i;
+        if (end - start + 1 >= 2) {
+          segments.push({ id: `${w.id}-${start}-${end}`, path: w.path.slice(start, end + 1) as [number, number][] });
+        }
+        start = null;
+      }
+    }
+  }
+  return segments;
+};
+
 const MapWrapper: React.FC<MapWrapperProps> = ({
   sensors,
   cases,
@@ -170,11 +242,14 @@ const MapWrapper: React.FC<MapWrapperProps> = ({
   onAddItem,
   onSensorClick,
   onMapMove,
+  facilities,
+  waterways,
 }) => {
   const mapCenter: [number, number] = [18.5204, 73.8567];
   const [zoom, setZoom] = useState(13);
 
   const groupedCases = useMemo(() => clusterCases(cases, zoom), [cases, zoom]);
+  const highlighted = useMemo(() => buildHighlightedSegments(waterways, clusters), [waterways, clusters]);
 
   return (
     <MapContainer center={mapCenter} zoom={13} scrollWheelZoom={true} className="h-full w-full">
@@ -187,6 +262,8 @@ const MapWrapper: React.FC<MapWrapperProps> = ({
       <Pane name="riskZonePane" style={{ zIndex: 450 }} />
       <Pane name="contaminatedZonePane" style={{ zIndex: 460 }} />
       <Pane name="casePane" style={{ zIndex: 470 }} />
+      <Pane name="facilityPane" style={{ zIndex: 650 }} />
+      <Pane name="waterPane" style={{ zIndex: 440 }} />
 
       {/* Sensor Layer */}
       {layerVisibility.sensors && sensors.map(sensor => (
@@ -197,6 +274,28 @@ const MapWrapper: React.FC<MapWrapperProps> = ({
           eventHandlers={{
             click: () => onSensorClick(sensor),
           }}
+        />
+      ))}
+
+      {/* Health Facilities Layer */}
+      {layerVisibility.healthFacilities && facilities.map(f => (
+        <Marker key={f.id} position={f.position} icon={createFacilityIcon(f.type)} pane="facilityPane">
+          <Popup>
+            <div className="w-48 text-gray-800">
+              <h3 className="font-bold text-base mb-1">{f.name}</h3>
+              <p className="text-sm text-gray-600">{f.type}</p>
+            </div>
+          </Popup>
+        </Marker>
+      ))}
+
+      {/* Contaminated Water Layer (highlight river segments) */}
+      {layerVisibility.contaminatedWater && highlighted.map(seg => (
+        <Polyline
+          key={seg.id}
+          positions={seg.path}
+          pane="waterPane"
+          pathOptions={{ color: '#06b6d4', weight: 5, opacity: 0.9 }}
         />
       ))}
 
