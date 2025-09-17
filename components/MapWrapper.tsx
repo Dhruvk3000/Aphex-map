@@ -164,7 +164,7 @@ const AggregatedPopup: React.FC<{ group: AggregatedGroup }> = ({ group }) => {
 
 const createFacilityIcon = (type: FacilityType): L.DivIcon => {
   const color = type === FacilityType.Hospital ? '#ef4444' : '#3b82f6';
-  const glyph = type === FacilityType.Hospital ? '+' : '✚';
+  const glyph = '+';
   const html = `
     <div style="background:${color};color:#fff;width:24px;height:24px;border-radius:9999px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;box-shadow:0 2px 6px rgba(0,0,0,0.3)">${glyph}</div>
   `;
@@ -172,6 +172,27 @@ const createFacilityIcon = (type: FacilityType): L.DivIcon => {
 };
 
 const toRad = (v: number) => (v * Math.PI) / 180;
+const metersPerDegLat = 111320;
+const metersPerDegLng = (latDeg: number) => 111320 * Math.cos(toRad(latDeg));
+
+const distPointToSegmentMeters = (p: [number, number], a: [number, number], b: [number, number]) => {
+  const lat0 = (a[0] + b[0]) / 2;
+  const kx = metersPerDegLng(lat0);
+  const ky = metersPerDegLat;
+  const ax = a[1] * kx, ay = a[0] * ky;
+  const bx = b[1] * kx, by = b[0] * ky;
+  const px = p[1] * kx, py = p[0] * ky;
+  const vx = bx - ax, vy = by - ay;
+  const wx = px - ax, wy = py - ay;
+  const segLen2 = vx * vx + vy * vy;
+  const t = segLen2 === 0 ? 0 : Math.max(0, Math.min(1, (wx * vx + wy * vy) / segLen2));
+  const cx = ax + t * vx, cy = ay + t * vy;
+  const dx = px - cx, dy = py - cy;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const segLen = Math.sqrt(segLen2);
+  return { dist, t, segLen };
+};
+
 const haversine = (a: [number, number], b: [number, number]) => {
   const R = 6371000;
   const dLat = toRad(b[0] - a[0]);
@@ -188,46 +209,46 @@ const buildHighlightedSegments = (waterways: Waterway[], clusters: Cluster[]) =>
     if (w.path.length < 2) continue;
     const cum: number[] = [0];
     for (let i = 1; i < w.path.length; i++) cum[i] = cum[i - 1] + haversine(w.path[i - 1], w.path[i]);
+
     const windows: [number, number][] = [];
     for (const c of clusters) {
-      for (let i = 0; i < w.path.length; i++) {
-        const d = haversine(w.path[i], c.center);
-        if (d <= c.radius) {
-          const centerS = cum[i];
-          const ext = Math.max(500, c.radius); // extend upstream/downstream by >=500m or cluster radius
-          windows.push([centerS - ext, centerS + ext]);
+      for (let i = 1; i < w.path.length; i++) {
+        const a = w.path[i - 1];
+        const b = w.path[i];
+        const { dist, t, segLen } = distPointToSegmentMeters(c.center, a, b);
+        const threshold = c.radius + 150; // allow slight slack
+        if (dist <= threshold) {
+          const s0 = cum[i - 1];
+          const sClosest = s0 + t * segLen;
+          const ext = Math.max(600, c.radius);
+          windows.push([sClosest - ext, sClosest + ext]);
         }
       }
     }
-    // Merge windows
+
+    if (!windows.length) continue;
     windows.sort((a, b) => a[0] - b[0]);
     const merged: [number, number][] = [];
     for (const win of windows) {
       if (!merged.length || win[0] > merged[merged.length - 1][1]) merged.push([...win]);
       else merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], win[1]);
     }
-    if (!merged.length) continue;
-    // Build mask
-    const mask = new Array(w.path.length).fill(false);
-    for (let i = 0; i < w.path.length; i++) {
-      const s = cum[i];
-      for (const [a, b] of merged) {
-        if (s >= a && s <= b) { mask[i] = true; break; }
+
+    // Include segments whose span overlaps any merged window
+    let current: [number, number][] | null = null;
+    const overlaps = (s0: number, s1: number) => merged.some(([a, b]) => s0 <= b && s1 >= a);
+    for (let i = 1; i < w.path.length; i++) {
+      const s0 = cum[i - 1];
+      const s1 = cum[i];
+      if (overlaps(s0, s1)) {
+        if (!current) current = [w.path[i - 1]] as [number, number][];
+        current.push(w.path[i]);
+      } else if (current) {
+        segments.push({ id: `${w.id}-${segments.length}`, path: current as [number, number][] });
+        current = null;
       }
     }
-    // Extract contiguous segments
-    let start: number | null = null;
-    for (let i = 0; i < w.path.length; i++) {
-      if (mask[i] && start === null) start = i;
-      const endOfMask = i === w.path.length - 1 || !mask[i + 1];
-      if (start !== null && endOfMask) {
-        const end = i;
-        if (end - start + 1 >= 2) {
-          segments.push({ id: `${w.id}-${start}-${end}`, path: w.path.slice(start, end + 1) as [number, number][] });
-        }
-        start = null;
-      }
-    }
+    if (current) segments.push({ id: `${w.id}-${segments.length}`, path: current as [number, number][] });
   }
   return segments;
 };
@@ -263,6 +284,7 @@ const MapWrapper: React.FC<MapWrapperProps> = ({
       <Pane name="contaminatedZonePane" style={{ zIndex: 460 }} />
       <Pane name="casePane" style={{ zIndex: 470 }} />
       <Pane name="facilityPane" style={{ zIndex: 650 }} />
+      <Pane name="waterRiskPane" style={{ zIndex: 438 }} />
       <Pane name="waterPane" style={{ zIndex: 440 }} />
 
       {/* Sensor Layer */}
@@ -287,6 +309,16 @@ const MapWrapper: React.FC<MapWrapperProps> = ({
             </div>
           </Popup>
         </Marker>
+      ))}
+
+      {/* Water-Adjacent Risk (surrounding areas of highlighted water) */}
+      {layerVisibility.waterAdjacentRisk && highlighted.map(seg => (
+        <Polyline
+          key={`${seg.id}-risk`}
+          positions={seg.path}
+          pane="waterRiskPane"
+          pathOptions={{ color: '#8b5cf6', weight: 10, opacity: 0.35 }}
+        />
       ))}
 
       {/* Contaminated Water Layer (highlight river segments) */}
