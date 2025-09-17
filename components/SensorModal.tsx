@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Sensor, SensorStatus } from '../types';
 
@@ -9,11 +9,16 @@ interface SensorModalProps {
 }
 
 const SensorModal: React.FC<SensorModalProps> = ({ sensor, onClose, onDelete }) => {
+  const [showConfirm, setShowConfirm] = useState(false);
+
   const handleDelete = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent modal background close
-    if (window.confirm(`Are you sure you want to delete sensor ${sensor.id}? This action cannot be undone.`)) {
-      onDelete(sensor.id);
-    }
+    e.stopPropagation();
+    setShowConfirm(true);
+  };
+
+  const confirmDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onDelete(sensor.id);
   };
 
   const isDefaultData = sensor.readings.every(r => r.waterQuality === 50 && r.bacteriaCount === 20);
@@ -81,6 +86,28 @@ const SensorModal: React.FC<SensorModalProps> = ({ sensor, onClose, onDelete }) 
             </LineChart>
           </ResponsiveContainer>
         </div>
+        {showConfirm && (
+          <div className="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center rounded-xl">
+            <div className="bg-gray-900 text-white rounded-lg p-6 w-full max-w-sm shadow-xl">
+              <h4 className="text-lg font-semibold mb-2">Delete Sensor</h4>
+              <p className="text-sm text-gray-300 mb-4">Are you sure you want to delete <span className="font-semibold">{sensor.id}</span>? This action cannot be undone.</p>
+              <div className="flex justify-end space-x-3">
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowConfirm(false); }}
+                  className="px-4 py-2 rounded-md bg-gray-700 hover:bg-gray-600 text-gray-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDelete}
+                  className="px-4 py-2 rounded-md bg-red-600 hover:bg-red-700 text-white font-semibold"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
