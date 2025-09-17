@@ -1,0 +1,5 @@
+{
+  "name": "Outbreak Monitor",
+  "description": "An interactive web application for monitoring and analyzing disease outbreaks using simulated IoT sensor data and reported cases. Features include an interactive map, data layers, and simulated cluster analysis.",
+  "requestFramePermissions": []
+}
