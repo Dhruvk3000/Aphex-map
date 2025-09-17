@@ -38,6 +38,8 @@ export interface LayerVisibility {
   cases: boolean;
   contaminatedZones: boolean;
   inRiskZones: boolean;
+  healthFacilities: boolean;
+  contaminatedWater: boolean;
 }
 
 export interface MapStats {
@@ -60,6 +62,24 @@ export interface RiskZone {
 }
 
 export type AddMode = 'sensor' | 'confirmed' | 'reported' | null;
+
+export enum FacilityType {
+  Hospital = 'Hospital',
+  Clinic = 'Clinic',
+}
+
+export interface Facility {
+  id: string;
+  type: FacilityType;
+  name: string;
+  position: [number, number];
+}
+
+export interface Waterway {
+  id: string;
+  name: string;
+  path: [number, number][]; // ordered polyline of the river/stream
+}
 
 export interface Weather {
   location: string;
