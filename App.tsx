@@ -4,11 +4,11 @@ import MapWrapper from './components/MapWrapper';
 import SensorModal from './components/SensorModal';
 import AddControl from './components/AddControl';
 import { Sensor, CaseReport, LayerVisibility, SensorStatus, MapStats, Cluster, RiskZone, AddMode, Weather, CaseType, SensorReading } from './types';
-import { INITIAL_SENSORS, INITIAL_CASES, CLUSTERS, RISK_ZONES } from './lib/data';
+import { INITIAL_SENSORS, INITIAL_CASES, CLUSTERS, RISK_ZONES, HEALTH_FACILITIES, WATERWAYS } from './lib/data';
 import type { LatLng } from 'leaflet';
 
 // IMPORTANT: Replace with your actual OpenWeatherMap API key
-const WEATHER_API_KEY = process.env.WEATHER_API_KEY || '257d26b5e367d7b7c54b3ac16f836821';
+const WEATHER_API_KEY = (import.meta as any).env?.VITE_WEATHER_API_KEY || '257d26b5e367d7b7c54b3ac16f836821';
 
 // --- AddSensorModal Component ---
 interface AddSensorModalProps {
@@ -115,6 +115,8 @@ const App: React.FC = () => {
     cases: true,
     contaminatedZones: true,
     inRiskZones: true,
+    healthFacilities: true,
+    contaminatedWater: true,
   });
 
   const [selectedSensor, setSelectedSensor] = useState<Sensor | null>(null);
@@ -301,6 +303,8 @@ const App: React.FC = () => {
           onAddItem={handleAddItem}
           onSensorClick={handleSensorClick}
           onMapMove={handleMapMove}
+          facilities={HEALTH_FACILITIES}
+          waterways={WATERWAYS}
         />
         <AddControl addMode={addMode} setAddMode={setAddMode} />
       </main>

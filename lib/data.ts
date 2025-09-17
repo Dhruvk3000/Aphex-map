@@ -1,4 +1,4 @@
-import { Sensor, CaseReport, SensorStatus, CaseType, Cluster, RiskZone } from '../types';
+import { Sensor, CaseReport, SensorStatus, CaseType, Cluster, RiskZone, Facility, FacilityType, Waterway } from '../types';
 
 const generateReadings = (valueOffset: number, countOffset: number) => {
   return Array.from({ length: 10 }, (_, i) => {
@@ -98,7 +98,35 @@ export const CLUSTERS: Cluster[] = [
 export const RISK_ZONES: RiskZone[] = [
   {
     id: 'riskzone-1',
-    center: [18.523, 73.857], // Same center as the cluster
-    radius: 2000, // Larger radius, in meters
+    center: [18.523, 73.857],
+    radius: 2000,
+  },
+];
+
+// HEALTH FACILITIES (Hospitals and Clinics)
+export const HEALTH_FACILITIES: Facility[] = [
+  { id: 'fac-1', type: FacilityType.Hospital, name: 'Sassoon General Hospital', position: [18.5286, 73.8740] },
+  { id: 'fac-2', type: FacilityType.Hospital, name: 'Jehangir Hospital', position: [18.5338, 73.8769] },
+  { id: 'fac-3', type: FacilityType.Clinic, name: 'Ruby Hall Clinic', position: [18.5363, 73.8851] },
+  { id: 'fac-4', type: FacilityType.Clinic, name: 'Karve Road Clinic', position: [18.5084, 73.8077] },
+];
+
+// WATERWAYS (simplified polylines for Mula-Mutha river through Pune)
+export const WATERWAYS: Waterway[] = [
+  {
+    id: 'river-mula-mutha-1',
+    name: 'Mula-Mutha River',
+    path: [
+      [18.5485, 73.7770],
+      [18.5450, 73.8000],
+      [18.5410, 73.8250],
+      [18.5360, 73.8450],
+      [18.5300, 73.8600],
+      [18.5230, 73.8700],
+      [18.5170, 73.8800],
+      [18.5100, 73.8950],
+      [18.5050, 73.9100],
+      [18.5000, 73.9300],
+    ],
   },
 ];
