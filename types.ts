@@ -40,6 +40,7 @@ export interface LayerVisibility {
   inRiskZones: boolean;
   healthFacilities: boolean;
   contaminatedWater: boolean;
+  waterAdjacentRisk: boolean;
 }
 
 export interface MapStats {
