@@ -380,7 +380,7 @@ const App: React.FC = () => {
           sensors={sensors}
           cases={cases}
           clusters={allClusters}
-          riskZones={riskZones}
+          riskZones={allRiskZones}
           layerVisibility={layerVisibility}
           addMode={addMode}
           onAddItem={handleAddItem}
