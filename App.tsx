@@ -117,6 +117,7 @@ const App: React.FC = () => {
     inRiskZones: true,
     healthFacilities: true,
     contaminatedWater: true,
+    waterAdjacentRisk: true,
   });
 
   const [selectedSensor, setSelectedSensor] = useState<Sensor | null>(null);
