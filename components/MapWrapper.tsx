@@ -348,7 +348,7 @@ const MapWrapper: React.FC<MapWrapperProps> = ({
       ...clusters.map(c => ({ center: c.center, radius: c.radius })),
       ...riskZones.map(r => ({ center: r.center, radius: r.radius })),
     ];
-    const buffer = 1400; // increased adjacent radius along water
+    const buffer = 5000; // increased adjacent radius along water
     const segs: { id: string; path: [number, number][] }[] = [];
     let idx = 0;
     for (const g of waterGeoms) {
