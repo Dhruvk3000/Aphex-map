@@ -379,7 +379,7 @@ const App: React.FC = () => {
         <MapWrapper
           sensors={sensors}
           cases={cases}
-          clusters={clusters}
+          clusters={allClusters}
           riskZones={riskZones}
           layerVisibility={layerVisibility}
           addMode={addMode}
