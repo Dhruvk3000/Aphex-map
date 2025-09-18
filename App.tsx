@@ -127,15 +127,97 @@ const App: React.FC = () => {
   const [isAddSensorModalOpen, setIsAddSensorModalOpen] = useState(false);
   const [pendingSensorLocation, setPendingSensorLocation] = useState<LatLng | null>(null);
 
+  // --- Dynamic clustering of confirmed (red) cases to create new zones ---
+  const allClustersAndZones = useMemo(() => {
+    const toRad = (v: number) => (v * Math.PI) / 180;
+    const haversine = (a: [number, number], b: [number, number]) => {
+      const R = 6371000;
+      const dLat = toRad(b[0] - a[0]);
+      const dLng = toRad(b[1] - a[1]);
+      const lat1 = toRad(a[0]);
+      const lat2 = toRad(b[0]);
+      const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(h));
+    };
+
+    const confirmed = cases.filter(c => c.type === CaseType.Confirmed);
+    const EPS_METERS = 700; // proximity threshold similar to base contaminated cluster radius
+    const MIN_POINTS = 5;   // "more than 4" red cases
+
+    const n = confirmed.length;
+    if (n < MIN_POINTS) return { clusters: clusters, riskZones: riskZones };
+
+    const visited: boolean[] = new Array(n).fill(false);
+    const assigned: boolean[] = new Array(n).fill(false);
+
+    const neighbors = (i: number) => {
+      const res: number[] = [];
+      for (let j = 0; j < n; j++) {
+        if (i === j) continue;
+        if (haversine(confirmed[i].position, confirmed[j].position) <= EPS_METERS) res.push(j);
+      }
+      return res;
+    };
+
+    const clustersIdx: number[][] = [];
+
+    for (let i = 0; i < n; i++) {
+      if (visited[i]) continue;
+      visited[i] = true;
+      const neigh = neighbors(i);
+      if (neigh.length + 1 < MIN_POINTS) continue;
+      const cluster: number[] = [i];
+      assigned[i] = true;
+
+      const queue = [...neigh];
+      while (queue.length) {
+        const j = queue.shift()!;
+        if (!visited[j]) {
+          visited[j] = true;
+          const neigh2 = neighbors(j);
+          if (neigh2.length + 1 >= MIN_POINTS) {
+            for (const k of neigh2) if (!queue.includes(k)) queue.push(k);
+          }
+        }
+        if (!assigned[j]) {
+          assigned[j] = true;
+          cluster.push(j);
+        }
+      }
+      clustersIdx.push(cluster);
+    }
+
+    const dynClusters: Cluster[] = clustersIdx.map((idxs, idx) => {
+      const pts = idxs.map(i => confirmed[i].position);
+      const lat = pts.reduce((a, p) => a + p[0], 0) / pts.length;
+      const lng = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+      return { id: `cluster-auto-${idx + 1}` , center: [lat, lng], radius: 700 };
+    });
+
+    // Filter out dynamic clusters that are overlapping/near existing ones
+    const baseClusters = clusters;
+    const filteredDyn = dynClusters.filter(dc => !baseClusters.some(bc => haversine(dc.center, bc.center) <= Math.max(bc.radius, dc.radius)));
+
+    const dynRiskZones: RiskZone[] = filteredDyn.map((c, idx) => ({ id: `riskzone-auto-${idx + 1}` , center: c.center, radius: 2000 }));
+
+    return {
+      clusters: [...baseClusters, ...filteredDyn],
+      riskZones: [...riskZones, ...dynRiskZones],
+    };
+  }, [cases, clusters, riskZones]);
+
+  const allClusters = allClustersAndZones.clusters;
+  const allRiskZones = allClustersAndZones.riskZones;
+
   const stats: MapStats = useMemo(() => {
     const activeSensors = sensors.filter(s => s.status !== SensorStatus.Inactive).length;
     return {
       activeSensors,
       reportedCases: cases.length,
-      contaminatedClusters: clusters.length,
-      totalRiskZoneArea: riskZones.reduce((acc, zone) => acc + (Math.PI * Math.pow(zone.radius, 2) / 1000000), 0).toFixed(2),
+      contaminatedClusters: allClusters.length,
+      totalRiskZoneArea: allRiskZones.reduce((acc, zone) => acc + (Math.PI * Math.pow(zone.radius, 2) / 1000000), 0).toFixed(2),
     };
-  }, [sensors, cases, clusters, riskZones]);
+  }, [sensors, cases, allClusters, allRiskZones]);
 
   const handleAddItem = useCallback((latlng: LatLng) => {
     if (!addMode) return;
