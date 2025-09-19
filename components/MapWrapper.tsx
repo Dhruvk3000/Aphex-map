@@ -231,36 +231,24 @@ const makeSegmentsForLine = (
   extraMeters: number
 ) => {
   if (path.length < 2) return [] as { id: string; path: [number, number][] }[];
-  const cum: number[] = [0];
-  for (let i = 1; i < path.length; i++) cum[i] = cum[i - 1] + haversine(path[i - 1], path[i]);
-  const windows: [number, number][] = [];
-  for (let i = 0; i < path.length; i++) {
-    if (insideAnyCircle(path[i], circles)) {
-      const s = cum[i] ?? 0;
-      windows.push([s, s]);
-    }
-  }
-  if (!windows.length) return [];
-  // Merge and expand
-  windows.sort((a, b) => a[0] - b[0]);
-  const merged: [number, number][] = [];
-  for (const [a, b] of windows) {
-    const A = a - extraMeters, B = b + extraMeters;
-    if (!merged.length || A > merged[merged.length - 1][1]) merged.push([A, B]);
-    else merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], B);
-  }
-  // Build segments
+
+  const intersectsAnyCircle = (a: [number, number], b: [number, number]) =>
+    circles.some(c => {
+      const { dist } = distPointToSegmentMeters(c.center, a, b);
+      return dist <= c.radius + extraMeters;
+    });
+
   const segs: { id: string; path: [number, number][] }[] = [];
   let cur: [number, number][] | null = null;
-  const overlaps = (s0: number, s1: number) => merged.some(([A, B]) => s0 <= B && s1 >= A);
+
   for (let i = 1; i < path.length; i++) {
-    const s0 = cum[i - 1];
-    const s1 = cum[i];
-    if (overlaps(s0, s1)) {
-      if (!cur) cur = [path[i - 1]] as [number, number][];
-      cur.push(path[i]);
+    const a = path[i - 1];
+    const b = path[i];
+    if (intersectsAnyCircle(a, b)) {
+      if (!cur) cur = [a];
+      cur.push(b);
     } else if (cur) {
-      segs.push({ id: `${i}-${segs.length}` , path: cur as [number, number][] });
+      segs.push({ id: `${i}-${segs.length}`, path: cur as [number, number][] });
       cur = null;
     }
   }
