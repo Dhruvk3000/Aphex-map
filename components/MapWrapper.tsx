@@ -324,14 +324,17 @@ const MapWrapper: React.FC<MapWrapperProps> = ({
   }, [clusters, riskZones]);
 
   const contaminatedSegments = useMemo(() => {
-    if (!waterLoaded || !waterGeoms.length) return [] as { id: string; path: [number, number][] }[];
     const circles = [
       ...clusters.map(c => ({ center: c.center, radius: c.radius })),
       ...riskZones.map(r => ({ center: r.center, radius: r.radius })),
     ];
+    const sources: { id: string; path: [number, number][]; isPolygon: boolean }[] = [
+      ...waterGeoms.map(g => ({ id: g.id, path: g.path, isPolygon: g.isPolygon })),
+      ...waterways.map(w => ({ id: w.id, path: w.path, isPolygon: false })),
+    ];
     const segs: { id: string; path: [number, number][] }[] = [];
     let idx = 0;
-    for (const g of waterGeoms) {
+    for (const g of sources) {
       if (g.isPolygon) {
         if (g.path.some(p => insideAnyCircle(p, circles))) segs.push({ id: `${g.id}-${idx++}`, path: g.path });
       } else {
@@ -340,18 +343,21 @@ const MapWrapper: React.FC<MapWrapperProps> = ({
       }
     }
     return segs;
-  }, [waterLoaded, waterGeoms, clusters, riskZones]);
+  }, [waterGeoms, waterways, clusters, riskZones]);
 
   const waterAdjacentRiskSegments = useMemo(() => {
-    if (!waterLoaded || !waterGeoms.length) return [] as { id: string; path: [number, number][] }[];
     const circles = [
       ...clusters.map(c => ({ center: c.center, radius: c.radius })),
       ...riskZones.map(r => ({ center: r.center, radius: r.radius })),
     ];
     const buffer = 1700; // increased adjacent radius along water
+    const sources: { id: string; path: [number, number][]; isPolygon: boolean }[] = [
+      ...waterGeoms.map(g => ({ id: g.id, path: g.path, isPolygon: g.isPolygon })),
+      ...waterways.map(w => ({ id: w.id, path: w.path, isPolygon: false })),
+    ];
     const segs: { id: string; path: [number, number][] }[] = [];
     let idx = 0;
-    for (const g of waterGeoms) {
+    for (const g of sources) {
       if (g.isPolygon) {
         if (g.path.some(p => insideAnyCircle(p, circles))) segs.push({ id: `${g.id}-${idx++}`, path: g.path });
       } else {
@@ -360,7 +366,7 @@ const MapWrapper: React.FC<MapWrapperProps> = ({
       }
     }
     return segs;
-  }, [waterLoaded, waterGeoms, clusters, riskZones]);
+  }, [waterGeoms, waterways, clusters, riskZones]);
 
   return (
     <MapContainer center={mapCenter} zoom={13} scrollWheelZoom={true} className="h-full w-full">
