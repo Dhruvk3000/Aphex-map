@@ -333,7 +333,7 @@ const App: React.FC = () => {
 
   const fetchWeather = useCallback(async (lat: number, lon: number) => {
     if (!WEATHER_API_KEY || WEATHER_API_KEY === 'YOUR_OPENWEATHERMAP_API_KEY') {
-      setWeather({ location: "Pune", temp: 28, description: "Weather API Key needed", icon: "50d" });
+      setWeather({ location: "Guwahati", temp: 28, description: "Weather API Key needed", icon: "50d" });
       console.warn("OpenWeatherMap API key not configured.");
       return;
     }
