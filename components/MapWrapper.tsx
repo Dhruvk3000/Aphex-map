@@ -204,7 +204,7 @@ const haversine = (a: [number, number], b: [number, number]) => {
 };
 
 const bboxFromCircles = (centers: [number, number][], radii: number[]) => {
-  if (!centers.length) return [18.45, 73.75, 18.60, 73.95] as [number, number, number, number];
+  if (!centers.length) return [26.05, 91.60, 26.22, 91.88] as [number, number, number, number];
   let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
   for (let i = 0; i < centers.length; i++) {
     const [lat, lng] = centers[i];
@@ -269,7 +269,7 @@ const MapWrapper: React.FC<MapWrapperProps> = ({
   facilities,
   waterways,
 }) => {
-  const mapCenter: [number, number] = [18.5204, 73.8567];
+  const mapCenter: [number, number] = [26.1445, 91.7362];
   const [zoom, setZoom] = useState(13);
 
   const groupedCases = useMemo(() => clusterCases(cases, zoom), [cases, zoom]);
